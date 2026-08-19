@@ -1,0 +1,106 @@
+version: 2
+
+semantic_models:
+  - name: orders
+    description: "Order-level semantic model: one row per order, used for revenue and order-volume metrics."
+    model: ref('fct_orders')
+    defaults:
+      agg_time_dimension: order_date
+
+    entities:
+      - name: order
+        type: primary
+        expr: order_id
+      - name: customer
+        type: foreign
+        expr: customer_id
+
+    dimensions:
+      - name: order_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: status
+        type: categorical
+        expr: status
+
+    measures:
+      - name: order_total
+        description: "Sum of order dollar amounts."
+        agg: sum
+        expr: order_amount
+      - name: order_count
+        description: "Count of distinct orders."
+        agg: count
+        expr: order_id
+      - name: item_quantity
+        description: "Sum of item quantities across orders."
+        agg: sum
+        expr: item_quantity
+
+  - name: customers
+    description: "Customer-level semantic model exposing region and segment attributes for slicing order metrics."
+    model: ref('dim_customers')
+
+    entities:
+      - name: customer
+        type: primary
+        expr: customer_id
+
+    dimensions:
+      - name: region
+        type: categorical
+        expr: region
+      - name: segment
+        type: categorical
+        expr: segment
+
+  - name: products
+    description: "Product-level semantic model exposing product name and category for slicing order-line metrics."
+    model: ref('dim_products')
+
+    entities:
+      - name: product
+        type: primary
+        expr: product_id
+
+    dimensions:
+      - name: product_name
+        type: categorical
+        expr: product_name
+      - name: category
+        type: categorical
+        expr: category
+
+  - name: order_items
+    description: "Order line-item semantic model: one row per line item. Unlike `orders`, this grain preserves product detail, so its metrics can be broken down by product and category."
+    model: ref('fct_order_items')
+    defaults:
+      agg_time_dimension: order_date
+
+    entities:
+      - name: order_item
+        type: primary
+        expr: order_item_id
+      - name: order
+        type: foreign
+        expr: order_id
+      - name: product
+        type: foreign
+        expr: product_id
+
+    dimensions:
+      - name: order_date
+        type: time
+        type_params:
+          time_granularity: day
+
+    measures:
+      - name: line_revenue
+        description: "Sum of order line dollar amounts."
+        agg: sum
+        expr: line_amount
+      - name: line_item_quantity
+        description: "Sum of item quantities across order lines."
+        agg: sum
+        expr: quantity

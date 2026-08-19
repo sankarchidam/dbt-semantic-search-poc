@@ -1,0 +1,25 @@
+version: 2
+
+seeds:
+  - name: raw_customers
+    config:
+      column_types:
+        customer_id: integer
+  - name: raw_orders
+    config:
+      column_types:
+        order_id: integer
+        customer_id: integer
+        order_date: date
+  - name: raw_order_items
+    config:
+      column_types:
+        order_item_id: integer
+        order_id: integer
+        product_id: integer
+        quantity: integer
+        unit_price: double
+  - name: raw_products
+    config:
+      column_types:
+        product_id: integer

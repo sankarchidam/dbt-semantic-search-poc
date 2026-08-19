@@ -1,0 +1,22 @@
+name: 'semantic_search_poc'
+version: '1.0.0'
+config-version: 2
+
+profile: 'semantic_search_poc'
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  semantic_search_poc:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

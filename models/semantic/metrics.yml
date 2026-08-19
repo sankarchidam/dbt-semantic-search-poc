@@ -1,0 +1,45 @@
+version: 2
+
+metrics:
+  - name: revenue
+    description: "Total revenue: sum of order dollar amounts."
+    type: simple
+    label: "Revenue"
+    type_params:
+      measure: order_total
+
+  - name: order_count
+    description: "Number of orders placed."
+    type: simple
+    label: "Order Count"
+    type_params:
+      measure: order_count
+
+  - name: average_order_value
+    description: "Average dollar amount per order (revenue divided by order count)."
+    type: ratio
+    label: "Average Order Value"
+    type_params:
+      numerator: revenue
+      denominator: order_count
+
+  - name: total_items_sold
+    description: "Total quantity of items sold across all orders (order grain -- cannot be broken down by product or category; use items_sold for that)."
+    type: simple
+    label: "Total Items Sold"
+    type_params:
+      measure: item_quantity
+
+  - name: product_revenue
+    description: "Revenue from order line items, broken down by product or category (line-item grain -- use this instead of revenue when slicing by product)."
+    type: simple
+    label: "Product Revenue"
+    type_params:
+      measure: line_revenue
+
+  - name: items_sold
+    description: "Quantity of items sold, broken down by product or category (line-item grain -- use this instead of total_items_sold when slicing by product)."
+    type: simple
+    label: "Items Sold"
+    type_params:
+      measure: line_item_quantity

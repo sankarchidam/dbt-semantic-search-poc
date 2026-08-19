@@ -1,0 +1,58 @@
+version: 2
+
+models:
+  - name: metricflow_time_spine
+    description: "Daily date spine required by MetricFlow for time-based metric calculations."
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        granularity: day
+
+  - name: dim_customers
+    description: "One row per customer, with region and segment attributes."
+    columns:
+      - name: customer_id
+        description: "Primary key for a customer."
+        tests:
+          - unique
+          - not_null
+
+  - name: dim_products
+    description: "One row per product, with its category."
+    columns:
+      - name: product_id
+        description: "Primary key for a product."
+        tests:
+          - unique
+          - not_null
+
+  - name: fct_orders
+    description: "One row per order (order grain), with the order's total amount, item quantity, status, and date. Product detail is not available at this grain -- use fct_order_items for product/category breakdowns."
+    columns:
+      - name: order_id
+        description: "Primary key for an order."
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: "Foreign key to dim_customers."
+      - name: order_amount
+        description: "Total dollar amount of the order (sum of line item amounts)."
+      - name: item_quantity
+        description: "Total number of units across all line items in the order."
+
+  - name: fct_order_items
+    description: "One row per order line item (line-item grain), with product, quantity, and dollar amount. Use this for revenue/quantity broken down by product or category."
+    columns:
+      - name: order_item_id
+        description: "Primary key for an order line item."
+        tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: "Foreign key to fct_orders."
+      - name: product_id
+        description: "Foreign key to dim_products."
+      - name: line_amount
+        description: "Dollar amount of this line item (quantity * unit_price)."

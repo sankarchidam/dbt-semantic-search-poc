@@ -1,0 +1,7 @@
+semantic_search_poc:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: 'dev.duckdb'
+      threads: 4
