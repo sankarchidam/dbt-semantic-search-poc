@@ -56,3 +56,20 @@ models:
         description: "Foreign key to dim_products."
       - name: line_amount
         description: "Dollar amount of this line item (quantity * unit_price)."
+
+  - name: fct_payments
+    description: "One row per payment attempt (order grain), conformed from five processor feeds (Square, Stripe, PayPal, e-check, Venmo) into one status vocabulary (completed/failed/pending). An order can have more than one row -- a failed attempt followed by a successful retry, often on a different channel."
+    columns:
+      - name: payment_id
+        description: "Primary key for a payment attempt. Not globally sequential -- each channel has its own id scheme (e.g. sq_000001, ch_000001, PP-000001)."
+        tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: "Foreign key to fct_orders. Not unique -- an order can have multiple payment attempts."
+      - name: channel
+        description: "Which processor this attempt ran through: square, stripe, paypal, echeck, or venmo."
+      - name: amount
+        description: "Dollar amount attempted, normalized to a common unit (Square/Stripe report cents natively; this is already converted)."
+      - name: status
+        description: "Conformed status: completed, failed, or pending -- mapped from each channel's own vocabulary (e.g. Square's COMPLETED, PayPal's Completed, e-check's Cleared all become 'completed')."

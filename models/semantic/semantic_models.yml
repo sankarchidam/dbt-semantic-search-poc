@@ -104,3 +104,39 @@ semantic_models:
         description: "Sum of item quantities across order lines."
         agg: sum
         expr: quantity
+
+  - name: payments
+    description: "Payment-attempt semantic model: one row per payment attempt, conformed across five processor channels. Linked to orders (and, through orders, to customers) via the `order` entity -- this is the graph: payment metrics can be sliced by customer region/segment or order status with no denormalization, just by traversing order -> customer the same way order_items already does."
+    model: ref('fct_payments')
+    defaults:
+      agg_time_dimension: paid_at
+
+    entities:
+      - name: payment
+        type: primary
+        expr: payment_id
+      - name: order
+        type: foreign
+        expr: order_id
+
+    dimensions:
+      - name: paid_at
+        type: time
+        type_params:
+          time_granularity: day
+      - name: channel
+        type: categorical
+        expr: channel
+      - name: status
+        type: categorical
+        expr: status
+
+    measures:
+      - name: payment_amount
+        description: "Sum of payment amounts attempted, across all statuses -- pair with a status filter for a specific meaning (e.g. only completed)."
+        agg: sum
+        expr: amount
+      - name: payment_attempt_count
+        description: "Count of payment attempts, across all statuses."
+        agg: count
+        expr: payment_id

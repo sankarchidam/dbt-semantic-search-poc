@@ -23,3 +23,33 @@ seeds:
     config:
       column_types:
         product_id: integer
+  - name: raw_payments_square
+    config:
+      column_types:
+        order_id: integer
+        amount_cents: integer
+        created_at: date
+  - name: raw_payments_stripe
+    config:
+      column_types:
+        order_id: integer
+        amount_cents: integer
+        created: date
+  - name: raw_payments_paypal
+    config:
+      column_types:
+        order_id: integer
+        gross_amount: double
+        transaction_time: date
+  - name: raw_payments_echeck
+    config:
+      column_types:
+        order_id: integer
+        amount: double
+        cleared_date: date
+  - name: raw_payments_venmo
+    config:
+      column_types:
+        order_id: integer
+        amount: double
+        txn_date: date

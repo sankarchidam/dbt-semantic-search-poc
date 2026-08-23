@@ -43,3 +43,28 @@ metrics:
     label: "Items Sold"
     type_params:
       measure: line_item_quantity
+
+  - name: payments_collected
+    description: "Total dollar amount successfully collected across all payment channels (status = completed only). Sliceable by channel, or -- via the order entity -- by customer region/segment or order status."
+    type: simple
+    label: "Payments Collected"
+    type_params:
+      measure: payment_amount
+    filter: |
+      {{ Dimension('payment__status') }} = 'completed'
+
+  - name: payment_attempts
+    description: "Count of all payment attempts across all channels, regardless of outcome. Includes retries -- an order with a failed attempt followed by a successful one counts as two attempts here."
+    type: simple
+    label: "Payment Attempts"
+    type_params:
+      measure: payment_attempt_count
+
+  - name: failed_payments
+    description: "Count of payment attempts that failed (declined, denied, returned) -- use to spot processor or channel issues, e.g. broken down by channel."
+    type: simple
+    label: "Failed Payments"
+    type_params:
+      measure: payment_attempt_count
+    filter: |
+      {{ Dimension('payment__status') }} = 'failed'

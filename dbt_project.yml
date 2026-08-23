@@ -18,5 +18,7 @@ models:
   semantic_search_poc:
     staging:
       +materialized: view
+    intermediate:
+      +materialized: view
     marts:
       +materialized: table

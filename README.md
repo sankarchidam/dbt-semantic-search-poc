@@ -2,37 +2,45 @@
 
 A small but real end-to-end system, seeded with a small personal-care shop's
 data (shampoo, skin oil, bar soap, perfume, lotion, real-looking customer
-names): a DuckDB lakehouse, transformed by dbt, with a dbt Semantic Layer
-(MetricFlow) on top, searchable in plain English through **one shared
-catalog** of metrics, dimensions, and tables — via either a CLI or a local
-web UI. Search never re-derives business logic; it only finds the right
-pointer into the semantic layer, so a result is always consistent with what
-the semantic layer itself would compute.
+names, and payments across five processors): a DuckDB lakehouse, transformed
+by dbt through a proper staging → intermediate (CDM) → marts pipeline, with
+a dbt Semantic Layer (MetricFlow) on top whose entities form a real join
+graph — customer ← order ← order_item → product, and order ← payment —
+searchable in plain English through **one shared catalog** of metrics,
+dimensions, and tables — via either a CLI or a local web UI. Search never
+re-derives business logic; it only finds the right pointer into the
+semantic layer, so a result is always consistent with what the semantic
+layer itself would compute.
 
 ```
-                    ┌─────────────────────────────────────────┐
-                    │        seeds/  (raw CSVs)                │
-                    │  customers · orders · order_items · products
-                    └───────────────────┬───────────────────────┘
-                                        │ dbt (staging → marts)
-                                        ▼
-     ┌──────────────────────────────────────────────────────────┐
-     │                DuckDB lakehouse (dev.duckdb)                │
-     │   dim_customers · dim_products · fct_orders · fct_order_items │
-     └───────────────────────────┬──────────────────────────────┘
+     ┌──────────────────────────────────────────────────────────────┐
+     │  seeds/  (raw CSVs, 120 customers · 400 orders · ~450 payments) │
+     │  customers · products · orders · order_items                    │
+     │  payments: square · stripe · paypal · echeck · venmo  (5 schemas)│
+     └───────────────────────────┬──────────────────────────────────┘
+                                 │ dbt: staging → intermediate (CDM) → marts
+                                 ▼
+     ┌──────────────────────────────────────────────────────────────┐
+     │                  DuckDB lakehouse (dev.duckdb)                  │
+     │  dim_customers · dim_products · fct_orders · fct_order_items    │
+     │  fct_payments  (5 processor feeds conformed into one table)     │
+     └───────────────────────────┬──────────────────────────────────┘
                                  │ semantic_models.yml / metrics.yml
                                  ▼
-     ┌──────────────────────────────────────────────────────────┐
-     │        dbt Semantic Layer (MetricFlow) — 6 metrics           │
-     │    revenue · order_count · average_order_value ·             │
-     │    total_items_sold · product_revenue · items_sold           │
-     └───────────────────────────┬──────────────────────────────┘
+     ┌──────────────────────────────────────────────────────────────┐
+     │          dbt Semantic Layer (MetricFlow) — 9 metrics             │
+     │   revenue · order_count · average_order_value · total_items_sold │
+     │   product_revenue · items_sold · payments_collected ·            │
+     │   payment_attempts · failed_payments                             │
+     │   entity graph: customer ← order ← order_item → product          │
+     │                          order ← payment                         │
+     └───────────────────────────┬──────────────────────────────────┘
                                  │ scripts/catalog.py
                                  ▼
-     ┌──────────────────────────────────────────────────────────┐
-     │      Unified search catalog — metrics + dimensions + tables   │
-     │      embedded locally with sentence-transformers               │
-     └───────┬───────────────────────────────────────┬────────────┘
+     ┌──────────────────────────────────────────────────────────────┐
+     │      Unified search catalog — metrics + dimensions + tables      │
+     │      embedded locally with sentence-transformers                  │
+     └───────┬───────────────────────────────────────┬────────────────┘
              │                                       │
              ▼                                       ▼
    scripts/semantic_search.py               scripts/app.py (Flask)
@@ -55,8 +63,8 @@ resolution (`mf list metrics`), rather than from hand-maintained metadata.
 | Layer | Tool | Role |
 |---|---|---|
 | Lakehouse storage/query engine | **DuckDB** | Local, zero-setup stand-in for a lakehouse (swap for Snowflake/Databricks/BigQuery later — same dbt project) |
-| Transformation | **dbt-core** (`dbt-duckdb` adapter) | Raw seeds → staging views → 4 mart tables across 3 domains (customers, products, orders) |
-| Semantic layer | **dbt Semantic Layer / MetricFlow** (`semantic_models.yml`, `metrics.yml`) | Entities, dimensions, measures, and 6 metrics defined on top of the marts — the single source of truth |
+| Transformation | **dbt-core** (`dbt-duckdb` adapter) | Raw seeds → staging views → **intermediate (CDM)** → 5 mart tables across 4 domains (customers, products, orders, payments) |
+| Semantic layer | **dbt Semantic Layer / MetricFlow** (`semantic_models.yml`, `metrics.yml`) | Entities, dimensions, measures, and 9 metrics defined on top of the marts — the single source of truth. Entities form a real join graph: `customer ← order ← order_item → product`, and `order ← payment` |
 | Query execution | **MetricFlow CLI (`mf`)** | Compiles a metric + dimension request into SQL and runs it against DuckDB, no dbt Cloud needed |
 | **Unified catalog** | `scripts/catalog.py` | Reads dbt's compiled manifests + `mf list metrics` and produces one list of searchable items: **metrics**, **dimensions**, and **tables/columns** |
 | Search index | `scripts/search_index.py` + **sentence-transformers** (`all-MiniLM-L6-v2`, local, no API key) | Embeds every catalog item once at startup; ranks by cosine similarity against a query |
@@ -67,9 +75,12 @@ resolution (`mf list metrics`), rather than from hand-maintained metadata.
 ## Project layout
 
 ```
-seeds/                       synthetic raw CSVs: customers, products, orders, order_items (generated, not hand-written)
-models/staging/               1:1 cleaned views over the seeds
-models/marts/                 dim_customers, dim_products, fct_orders, fct_order_items, metricflow_time_spine
+seeds/                       synthetic raw CSVs: customers, products, orders, order_items,
+                              payments_{square,stripe,paypal,echeck,venmo} (generated, not hand-written)
+models/staging/               1:1 cleaned views over the seeds -- one model per payment channel too
+models/intermediate/           int_payments_unioned.sql -- the CDM step: union 5 channels, conform status
+models/marts/                 dim_customers, dim_products, fct_orders, fct_order_items, fct_payments,
+                              metricflow_time_spine
 models/semantic/               semantic_models.yml, metrics.yml   ← the semantic layer
 scripts/generate_seed_data.py  (re)generates seeds/*.csv with order dates anchored to today
 scripts/catalog.py             builds the unified metrics+dimensions+tables catalog
@@ -82,9 +93,11 @@ scripts/templates/index.html   the search UI page
 
 ## Data model — a small multi-domain lakehouse
 
-Seeded to look like a real small business: a personal-care shop. 30 customers
-with realistic full names (e.g. "Michael Arkinson", not "Customer 1"), and 8
-household/personal-care products across four categories:
+Seeded to look like a real small business: a personal-care shop. **120
+customers** with realistic full names (e.g. "Michael Arkinson", not
+"Customer 1"), 8 household/personal-care products across four categories,
+**400 orders**, ~1,000 order line items, and **~450 payment transactions**
+across five processors:
 
 | Product | Category |
 |---|---|
@@ -93,15 +106,39 @@ household/personal-care products across four categories:
 | Oatmeal Bar Soap, Charcoal Bar Soap | Bath & Body |
 | Citrus Bloom Perfume, Sandalwood Perfume | Fragrance |
 
-Two grains, deliberately, to make the semantic layer's job of disambiguation
-real rather than trivial:
+Three grains, deliberately, to make the semantic layer's job of
+disambiguation real rather than trivial:
 
 - `dim_customers` — one row per customer (`region`, `segment`)
 - `dim_products` — one row per product (`category`)
 - `fct_orders` — **order grain**: total amount/quantity per order, with status and date. Product detail is lost at this grain.
 - `fct_order_items` — **line-item grain**: one row per order line, preserving `product_id`, so it can be broken down by product/category.
+- `fct_payments` — **payment-attempt grain**: one row per payment attempt, conformed from five processor feeds. An order can have more than one row (a failed attempt + a successful retry) — see **Transformation**, below, for how the five feeds become one table.
 
-## The semantic layer — 6 metrics, including two near-duplicate pairs on purpose
+## The entity graph
+
+MetricFlow's entities aren't just foreign keys for joining — together they
+form a real graph that determines what any metric can legally be sliced by,
+without denormalizing anything:
+
+```
+customer ── order ── order_item ── product
+              │
+              └── payment
+```
+
+`payments_collected` (defined only on `fct_payments`) can be grouped by
+`order__customer__region` — two hops away — purely because `payment` has a
+foreign `order` entity, and `order` has a foreign `customer` entity.
+Nothing about region lives on the payments table; MetricFlow walks the
+graph to get there. This is the same mechanism `product_revenue` already
+used to reach `customer__region` through `order_item → order → customer`.
+The one deliberate gap: **payments are not linked to products** — a
+payment is order-grain, `order_item` is line-item grain, and joining across
+that gap would fan out and double-count the payment amount per line item.
+Same caution this project already applies to `revenue` vs `product_revenue`.
+
+## The semantic layer — 9 metrics, including three near-duplicate pairs on purpose
 
 | Metric | Grain | Sliceable by |
 |---|---|---|
@@ -111,13 +148,20 @@ real rather than trivial:
 | `total_items_sold` | order | region, segment, status, time — **not** product |
 | `product_revenue` | line item | region, segment, status, time, **product, category** |
 | `items_sold` | line item | region, segment, status, time, **product, category** |
+| `payments_collected` | payment attempt | region, segment, order status, time, **channel** — completed attempts only |
+| `payment_attempts` | payment attempt | region, segment, order status, time, **channel** — all outcomes, includes retries |
+| `failed_payments` | payment attempt | region, segment, order status, time, **channel** — failed attempts only |
 
 `total_items_sold` vs `items_sold`, and `revenue` vs `product_revenue`, are
 intentionally near-duplicates with different grain and different available
 dimensions. Each has a description explaining when to use it — this is the
 disambiguation problem semantic search actually needs to solve, and you can
 see it happen: search `"units sold by product"` and `items_sold` wins over
-`total_items_sold`, correctly.
+`total_items_sold`, correctly. `payments_collected` joins that pattern from
+the payments side: it and `payment_attempts` look almost identical (both
+sum/count from the same measure family) but differ by a metric-level
+`filter:` on `status`, not by grain — a different flavor of the same
+disambiguation problem.
 
 ## Setup
 
@@ -150,6 +194,7 @@ python scripts/semantic_search.py "monthly revenue by region"
 python scripts/semantic_search.py "revenue by product category" --run
 python scripts/semantic_search.py "customer region" --top-k 5   # a dimension, not a metric -- shows what it can slice
 python scripts/semantic_search.py "how many items sold last month" --run   # needs OPENAI_API_KEY for the real date range
+python scripts/semantic_search.py "payments collected by customer region" --run   # crosses the payment -> order -> customer graph
 ```
 
 By default this uses `catalog.guess_group_by`'s keyword heuristic. If
@@ -229,12 +274,13 @@ see **Transformation**, below, for how real operational data gets in.)
 
 Between raw rows and the semantic layer sits dbt's actual job: turning
 loosely-typed source tables into the star schema `metrics.yml` depends on.
-Two layers, two different jobs:
+Three layers, three different jobs:
 
 | Layer | Job | Models |
 |---|---|---|
-| **Staging** | One view per source table. Renames/casts columns, computes trivial derived fields. No joins, no business logic, no aggregation. | `stg_customers`, `stg_products`, `stg_orders`, `stg_order_items` |
-| **Marts** | Joins staging models together, chooses a grain, and materializes the fact/dim tables the semantic layer references by name. | `dim_customers`, `dim_products`, `fct_orders`, `fct_order_items` |
+| **Staging** | One view per source table. Renames/casts columns, computes trivial derived fields. No joins, no business logic, no aggregation. | `stg_customers`, `stg_products`, `stg_orders`, `stg_order_items`, `stg_payments_{square,stripe,paypal,echeck,venmo}` |
+| **Intermediate (CDM)** | Unions/conforms multiple sources into one shared shape and vocabulary — business logic that doesn't yet belong to a final grain. | `int_payments_unioned` |
+| **Marts** | Joins staging (and intermediate) models together, chooses a grain, and materializes the fact/dim tables the semantic layer references by name. | `dim_customers`, `dim_products`, `fct_orders`, `fct_order_items`, `fct_payments` |
 
 **A real example — choosing a grain.** `fct_order_items.sql` is where the
 "product detail" decision actually gets made. Staging just cleans the
@@ -277,6 +323,66 @@ left join {{ ref('stg_orders') }} o on oi.order_id = o.order_id
 > and every model downstream — marts, the semantic layer, the catalog,
 > search — is untouched.
 
+**A real CDM example — five payment processors, one table.** This is where
+the intermediate layer earns its keep. Square and Stripe report cents;
+PayPal, e-check, and Venmo report dollars. Each has its own id scheme
+(`sq_000001`, `ch_000001`, `PP-000001`, ...) and its own status vocabulary —
+Square says `COMPLETED`, Stripe says `succeeded`, PayPal says `Completed`,
+e-check says `Cleared`, Venmo says `settled`, and they all mean the same
+fact. Staging only does the *mechanical* part, one model per channel — here,
+Square's cents-to-dollars conversion:
+
+```sql
+-- models/staging/stg_payments_square.sql
+select
+    square_payment_id as payment_id,
+    order_id,
+    'square' as channel,
+    amount_cents / 100.0 as amount,
+    currency,
+    status as status_raw,        -- NOT conformed yet -- still "COMPLETED"/"FAILED"
+    created_at as paid_at
+from {{ ref('raw_payments_square') }}
+```
+
+The intermediate model is the actual CDM step: union all five already-clean
+feeds, *then* decide that `COMPLETED`, `succeeded`, `Completed`, `Cleared`,
+and `settled` are the same fact. That's a judgment call about business
+meaning, not a rename — which is exactly why it doesn't belong in staging:
+
+```sql
+-- models/intermediate/int_payments_unioned.sql
+with unioned as (
+    select * from {{ ref('stg_payments_square') }}
+    union all
+    select * from {{ ref('stg_payments_stripe') }}
+    union all
+    select * from {{ ref('stg_payments_paypal') }}
+    union all
+    select * from {{ ref('stg_payments_echeck') }}
+    union all
+    select * from {{ ref('stg_payments_venmo') }}
+)
+select
+    payment_id, order_id, channel, amount, currency, paid_at,
+    case lower(status_raw)
+        when 'completed' then 'completed'  when 'succeeded'  then 'completed'
+        when 'cleared'   then 'completed'  when 'settled'    then 'completed'
+        when 'failed'    then 'failed'     when 'denied'     then 'failed'
+        when 'returned'  then 'failed'
+        when 'pending'   then 'pending'    when 'processing' then 'pending'
+        else 'unknown'
+    end as status
+from unioned
+```
+
+`fct_payments` (the mart) is then just the grain-clean final cut of that —
+one row per payment attempt, in one shared shape, regardless of which of
+the five systems it actually came from. Everything above this line —
+`semantic_models.yml`, `metrics.yml`, the catalog, search, the LLM
+interpreter — talks to `fct_payments` and has no idea five different
+processors exist.
+
 ### The full cycle
 
 Transformation is the hinge between two phases of the same loop: data is
@@ -284,10 +390,10 @@ built once, offline, and then a search query walks back through it, live,
 every time someone asks a question.
 
 **Build time** — runs once, whenever data changes:
-1. **Raw data** — seed CSVs here; a real ingestion tool in production.
-2. **Staging** — clean, typed, 1:1 views (`stg_orders`, `stg_order_items`, ...).
-3. **Marts** — joined, grained fact/dim tables, materialized into DuckDB (`fct_orders`, `fct_order_items`, `dim_customers`, `dim_products`).
-4. **Semantic layer** — MetricFlow compiles `semantic_models.yml` + `metrics.yml` against those marts into 6 queryable metrics.
+1. **Raw data** — seed CSVs here (including 5 separate payment processor feeds); a real ingestion tool in production.
+2. **Staging** — clean, typed, 1:1 views (`stg_orders`, `stg_order_items`, `stg_payments_square`, ...).
+3. **Intermediate → Marts** — `int_payments_unioned` conforms the 5 payment feeds into one vocabulary; marts then join/grain everything into `fct_orders`, `fct_order_items`, `fct_payments`, `dim_customers`, `dim_products`, materialized into DuckDB.
+4. **Semantic layer** — MetricFlow compiles `semantic_models.yml` + `metrics.yml` against those marts into 9 queryable metrics, with an entity graph linking customer ↔ order ↔ order_item ↔ product ↔ payment.
 
 **Runtime** — every time someone searches:
 
@@ -306,8 +412,9 @@ every time someone asks a question.
      `product__category`) collapsed to one entry per leaf name, listing every
      metric it can slice
    - **tables/columns** — documented mart models and their columns, from
-     `manifest.json` (undocumented staging views are skipped — nothing
-     useful to search on)
+     `manifest.json` (undocumented staging and intermediate models are
+     skipped — nothing useful to search on; `int_payments_unioned` is a CDM
+     plumbing step, not something a person searches for by name)
 2. **`scripts/search_index.py`** embeds every item's blurb with a local
    sentence-transformer (`all-MiniLM-L6-v2`) once at startup, and ranks a
    query against all of them by cosine similarity — one index, all three
@@ -475,7 +582,7 @@ Two things live testing surfaced along the way, both since fixed:
 
 - **Better retrieval**: swap the brute-force cosine loop for a real vector
   index (`lancedb`, `chroma`, `pgvector`) once the catalog has hundreds of
-  items, not ~17.
+  items, not ~23.
 - **Let the LLM see more than metrics**: `llm_interpreter.py` today only
   receives the top metric candidates. Passing dimension/table candidates
   too would let it handle mixed asks like "what's revenue, and what can I
