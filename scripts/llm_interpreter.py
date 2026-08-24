@@ -170,7 +170,20 @@ def interpret(query: str, candidates: list[dict], today: datetime.date | None = 
 
     system = (
         f"Today's date is {today.isoformat()}. Translate the user's analytics question "
-        f"into a structured query over the candidate metrics below. Pick exactly one metric.\n\n"
+        f"into a structured query over the candidate metrics below.\n\n"
+        f"Pick exactly one metric -- but pick it based on what the FULL question needs, not "
+        f"just which name reads closest. If the question names a specific thing to filter or "
+        f"group by (a product, category, channel, etc.), the metric you choose MUST have a "
+        f"matching dimension in its own available_dimensions -- a dimension whose leaf name "
+        f"(the part after the last '__') actually corresponds to that kind of value. For "
+        f"example, a product name like 'shampoo' belongs on a dimension named product_name or "
+        f"category, never on a dimension named status (status holds outcomes like "
+        f"completed/cancelled/failed, not product names) or channel (channel holds a payment "
+        f"processor name). If the closest-sounding metric by name doesn't have a dimension that "
+        f"fits, and a different candidate metric does, choose that other candidate instead -- "
+        f"even though its name matches the question less exactly, it is the one that can "
+        f"actually answer it. Never force a filter onto a dimension that doesn't semantically "
+        f"match the value, and never invent a metric or dimension not listed below.\n\n"
         f"group_by: include a dimension ONLY if the user's wording explicitly asks for a "
         f"breakdown, split, or comparison -- phrases like 'by region', 'per category', 'for "
         f"each segment', 'broken down by'. A plain question with no such phrase (e.g. 'total "
@@ -191,7 +204,6 @@ def interpret(query: str, candidates: list[dict], today: datetime.date | None = 
         f"start_date / end_date: resolve any relative time phrase (e.g. 'last month', 'this "
         f"year', 'past 7 days', 'year to date') into concrete dates. If the query names no "
         f"time constraint, leave both null.\n\n"
-        f"Never invent a metric or dimension name that isn't listed below.\n\n"
         f"Candidate metrics:\n{catalog_text}"
     )
 

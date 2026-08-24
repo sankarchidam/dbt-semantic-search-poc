@@ -506,6 +506,37 @@ dimension name) from keywords alone is too easy to get wrong silently, so
 query needing a filter just returns an unfiltered aggregate in heuristic
 mode instead of a wrong-looking-right one in LLM mode with no filters.
 
+**A related regression, caught and fixed when the catalog grew.** Once
+payments added 3 more metrics (9 total, up from 6), the *exact same* query
+started failing a different way: the model picked `total_items_sold`
+(order-grain, no product dimension) instead of `items_sold` — which was
+right there in its own candidate list — then, with no product dimension to
+attach "shampoo" to, applied the filter to `order__status` instead (a
+dimension that holds `completed`/`cancelled`/`returned`, never a product
+name). Silently empty, for a new reason. More near-neighbor metrics
+competing seems to have made metric selection less reliable for this
+phrasing specifically. The fix was the same kind as before — better
+instructions, not a bigger model: the prompt now requires the chosen metric
+to actually have a dimension that matches what's being filtered, and to
+prefer a different candidate over the closest-sounding one if that
+candidate can't fulfill the request. Re-verified against the current
+(120-customer, payments-enabled) dataset:
+
+```bash
+python scripts/semantic_search.py "How was my shampoo sales last month" --run
+#   Filters: product__product_name ILIKE '%shampoo%'
+#     items_sold
+#   ------------
+#             33
+```
+
+33 — confirmed independently against the per-product breakdown for the same
+period, versus **283** for `total_items_sold` (the whole store, all 8
+products) over the same window. Same lesson as the original 114-vs-25
+finding, replayed against a larger catalog: an LLM given a governed,
+validated vocabulary fails *loudly* (or gets caught in testing) rather than
+answering a different question with total confidence.
+
 This is opt-in and degrades gracefully: `llm_interpreter.available()` checks
 for the env var, and both the CLI and the web app fall back to
 `catalog.guess_group_by` (no date range, but no API key/network/cost either)
