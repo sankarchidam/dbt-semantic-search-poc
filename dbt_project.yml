@@ -14,6 +14,13 @@ clean-targets:
   - "target"
   - "dbt_packages"
 
+# dbt creates the schema automatically but not the catalog -- on Databricks,
+# a fresh DATABRICKS_CATALOG name needs `CREATE CATALOG` once before anything
+# else can run. Harmless no-op on DuckDB (and on Databricks once the catalog
+# already exists, since it's IF NOT EXISTS).
+on-run-start:
+  - "{% if target.type == 'databricks' %}create catalog if not exists {{ target.database }}{% endif %}"
+
 models:
   semantic_search_poc:
     staging:

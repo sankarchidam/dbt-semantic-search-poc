@@ -1,7 +1,30 @@
 semantic_search_poc:
-  target: dev
+  # `dbt`'s own CLI accepts --target to override this, but `mf` (MetricFlow's
+  # CLI) calls dbt's load_profile() directly, bypassing that flag layer --
+  # it only ever reads this key literally. Templating the key itself with
+  # env_var() makes target selection work the same way for `dbt`, `mf`, and
+  # every script here (none of which take a --target flag -- they all just
+  # run against whichever target is active): export DBT_TARGET=databricks
+  # to switch everything at once, unset it (or leave it unset) for the
+  # DuckDB default. Needs a real environment variable, not .env directly --
+  # dbt's env_var() reads the OS environment, unlike llm_interpreter.py's
+  # hand-rolled .env loader, which only affects Python scripts. Load .env
+  # into the shell first: `set -a && source .env && set +a`.
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
   outputs:
     dev:
       type: duckdb
       path: 'dev.duckdb'
+      threads: 4
+
+    # Same project, pointed at Databricks/Unity Catalog instead of the local
+    # DuckDB file -- nothing above the connection changes (see README "Eval
+    # harness" / "How seeds load into DuckDB" for why).
+    databricks:
+      type: databricks
+      catalog: "{{ env_var('DATABRICKS_CATALOG', 'semantic_search_poc') }}"
+      schema: "{{ env_var('DATABRICKS_SCHEMA', 'dev') }}"
+      host: "{{ env_var('DATABRICKS_HOST') }}"
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH') }}"
+      token: "{{ env_var('DATABRICKS_TOKEN') }}"
       threads: 4
