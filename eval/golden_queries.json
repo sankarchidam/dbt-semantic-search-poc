@@ -1,0 +1,169 @@
+[
+  {
+    "query": "total revenue",
+    "expected_type": "metric",
+    "expected_name": "revenue",
+    "expected_group_by": [],
+    "notes": "plain aggregate -- no breakdown phrase, so group_by must stay empty"
+  },
+  {
+    "query": "how many orders were placed",
+    "expected_type": "metric",
+    "expected_name": "order_count",
+    "expected_group_by": []
+  },
+  {
+    "query": "average order value",
+    "expected_type": "metric",
+    "expected_name": "average_order_value",
+    "expected_group_by": []
+  },
+  {
+    "query": "total items sold",
+    "expected_type": "metric",
+    "expected_name": "total_items_sold",
+    "expected_group_by": [],
+    "notes": "order-grain quantity metric; distinct from items_sold (line-item grain)"
+  },
+  {
+    "query": "revenue by region",
+    "expected_type": "metric",
+    "expected_name": "revenue",
+    "expected_group_by": ["customer__region"]
+  },
+  {
+    "query": "order count by status",
+    "expected_type": "metric",
+    "expected_name": "order_count",
+    "expected_group_by": ["order__status"]
+  },
+  {
+    "query": "average order value by segment",
+    "expected_type": "metric",
+    "expected_name": "average_order_value",
+    "expected_group_by": ["customer__segment"]
+  },
+  {
+    "query": "revenue broken down by customer segment",
+    "expected_type": "metric",
+    "expected_name": "revenue",
+    "expected_group_by": ["customer__segment"],
+    "notes": "non-product breakdown -- should stay on revenue, not jump to product_revenue"
+  },
+  {
+    "query": "units sold by product",
+    "expected_type": "metric",
+    "expected_name": "items_sold",
+    "expected_group_by": ["product__product_name"],
+    "notes": "README's own disambiguation example -- must beat total_items_sold, which has no product dimension"
+  },
+  {
+    "query": "items sold by category",
+    "expected_type": "metric",
+    "expected_name": "items_sold",
+    "expected_group_by": ["product__category"]
+  },
+  {
+    "query": "revenue by product category",
+    "expected_type": "metric",
+    "expected_name": "product_revenue",
+    "expected_group_by": ["product__category"],
+    "notes": "must beat plain revenue, which has no category dimension"
+  },
+  {
+    "query": "payments collected by customer region",
+    "expected_type": "metric",
+    "expected_name": "payments_collected",
+    "expected_group_by": ["order__customer__region"],
+    "notes": "graph-crossing: payment -> order -> customer, two hops, no denormalization"
+  },
+  {
+    "query": "payments collected by channel",
+    "expected_type": "metric",
+    "expected_name": "payments_collected",
+    "expected_group_by": ["payment__channel"]
+  },
+  {
+    "query": "payment attempts by channel",
+    "expected_type": "metric",
+    "expected_name": "payment_attempts",
+    "expected_group_by": ["payment__channel"],
+    "notes": "must not collapse to payments_collected or failed_payments -- same measure family, different status filter"
+  },
+  {
+    "query": "failed payments by channel",
+    "expected_type": "metric",
+    "expected_name": "failed_payments",
+    "expected_group_by": ["payment__channel"]
+  },
+  {
+    "query": "revenue last month",
+    "expected_type": "metric",
+    "expected_name": "revenue",
+    "expected_group_by": [],
+    "expected_relative_time": "last_month",
+    "notes": "LLM-only: heuristic has no date-range resolution"
+  },
+  {
+    "query": "how many items sold last month",
+    "expected_type": "metric",
+    "expected_name": "items_sold",
+    "expected_group_by": [],
+    "expected_relative_time": "last_month",
+    "notes": "LLM-only; exact phrasing from the README's own worked example"
+  },
+  {
+    "query": "revenue so far this year",
+    "expected_type": "metric",
+    "expected_name": "revenue",
+    "expected_group_by": [],
+    "expected_relative_time": "ytd",
+    "notes": "LLM-only: year-to-date resolution"
+  },
+  {
+    "query": "shampoo revenue",
+    "expected_type": "metric",
+    "expected_name": "product_revenue",
+    "expected_group_by": [],
+    "expected_filters": [{"dimension": "product__product_name", "contains": "shampoo"}],
+    "notes": "LLM-only: a casual product mention has to fuzzy-match the real value 'Lavender Shampoo'"
+  },
+  {
+    "query": "revenue from the west region",
+    "expected_type": "metric",
+    "expected_name": "revenue",
+    "expected_group_by": [],
+    "expected_filters": [{"dimension": "customer__region", "contains": "west"}],
+    "notes": "LLM-only: named-value filter, not a group_by"
+  },
+  {
+    "query": "cancelled orders",
+    "expected_type": "metric",
+    "expected_name": "order_count",
+    "expected_group_by": [],
+    "expected_filters": [{"dimension": "order__status", "contains": "cancel"}],
+    "notes": "LLM-only: filter to one status value, not a breakdown by status"
+  },
+  {
+    "query": "customer region",
+    "expected_type": "dimension",
+    "expected_name": "region",
+    "notes": "pure dimension lookup -- same query the README uses to show this isn't a metric"
+  },
+  {
+    "query": "payment channel",
+    "expected_type": "dimension",
+    "expected_name": "channel"
+  },
+  {
+    "query": "which table has one row per payment attempt",
+    "expected_type": "model",
+    "expected_name": "fct_payments",
+    "notes": "plain data-catalog discovery, not a metric run"
+  },
+  {
+    "query": "table with product category info",
+    "expected_type": "model",
+    "expected_name": "dim_products"
+  }
+]
