@@ -89,6 +89,8 @@ scripts/llm_interpreter.py     opt-in OpenAI call: real dates + validated group-
 scripts/semantic_search.py     CLI: search (+ optionally run a metric)
 scripts/app.py                 Flask web UI (same catalog/index, browser front end)
 scripts/templates/index.html   the search UI page
+scripts/eval_search.py         eval harness: grades search ranking + both resolution paths against golden_queries.json
+eval/golden_queries.json       25 golden queries with expected metric/dimensions/filters/date-range
 ```
 
 ## Data model — a small multi-domain lakehouse
@@ -655,6 +657,74 @@ YAML-defined semantic layer, distinct from dbt's) generated from this
 project's `metrics.yml`/`semantic_models.yml`, so Genie/DBSQL dashboards
 could discover the same metrics without MetricFlow in the loop. That's the
 next layer on top of this, not a replacement for it.
+## Eval harness
+
+The disambiguation claims above, and `llm_interpreter.py`'s claims about
+what the heuristic can't do, are demonstrable, not just asserted.
+`eval/golden_queries.json` holds 25 golden queries — every metric at least
+once, every documented disambiguation pair, a graph-crossing group-by, three
+relative-time queries, three named-value filters, and plain
+dimension/table lookups — each carrying its expected metric, dimensions,
+filters, and date range, decided before ever running the pipeline.
+`scripts/eval_search.py` runs all of them through the real pipeline —
+`search_index.py`'s embedding ranking, then both resolution paths — and
+prints accuracy tables, graded by exact match against each fixture's
+expected fields. No LLM-as-judge, for the same reason `triagegraph`'s own
+eval harness gives: judging a model with another model call just stacks a
+second source of non-determinism on top of the first.
+
+```bash
+python scripts/eval_search.py            # heuristic always graded; LLM graded too if OPENAI_API_KEY is set
+python scripts/eval_search.py --top-k 3  # stricter "did search even surface it" bar
+```
+
+**What it actually found**, last run against this seed data:
+
+| | search ranking | heuristic resolution | LLM resolution |
+|---|---|---|---|
+| top-1 exact match | 14/25 | — | — |
+| top-5 (surfaced at all) | 25/25 | — | — |
+| metric chosen correctly | — | 11/13 | 12/13 |
+| group_by correct | — | 9/13 | 13/13 |
+| filters correct | — | 12/13 | 13/13 |
+| time range correct | — | 10/13 | 13/13 |
+
+(Resolution is only graded on the 13 of 21 metric-type fixtures where
+search's own top-1 result was already a metric — matching
+`semantic_search.py`'s real behavior, which stops and reports "not a
+metric" otherwise. The other 8 are retrieval misses already counted in the
+search-ranking columns, not double-counted here.)
+
+Two real findings came out of this that the README's own hand-picked
+examples don't surface:
+
+1. **Top-1 search ranking is weaker than the curated examples suggest.**
+   Every expected item is always in the top 5, but barely over half rank
+   *first*. The failure mode is consistent: when a query names the exact
+   breakdown word, the **dimension** catalog entry often outranks the
+   **metric**, because the dimension's search text echoes that word back
+   verbatim (`"Dimension: category."`) while the metric's own description
+   doesn't repeat it as prominently —
+   `"revenue by product category"` ranks the `category` dimension (0.660)
+   above `product_revenue` (0.554); `"payment attempts by channel"` ranks
+   the `channel` dimension (0.627) above `payment_attempts` (0.538). This
+   doesn't break the CLI/UI — a dimension result still shows which metrics
+   it slices — but the single best-match line is a model/dimension result,
+   not the metric, noticeably more often than the README's walkthrough
+   implies.
+2. **The heuristic's one mechanism for "time or named word" conflicts with
+   filter-style phrasing.** `guess_group_by` reacts to a matching word the
+   same way regardless of intent: add it to `group_by`. Correct for
+   `"revenue by region"`, but for `"revenue from the west region"` or
+   `"revenue last month"` it produces an unwanted breakdown instead of a
+   restriction — exactly the gap `llm_interpreter.py`'s docstring already
+   names, now attached to a 9/13 heuristic `group_by` score instead of just
+   a prose claim.
+
+Re-run after any change to `catalog.py`'s search text, `guess_group_by`, or
+the LLM system prompt — that's the point: a prompt tweak that fixes
+`"shampoo revenue"` but regresses `"total revenue"` shows up as a number
+moving in the printed table, not as a vibe.
 
 ## Known simplifications
 
