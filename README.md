@@ -91,6 +91,7 @@ scripts/app.py                 Flask web UI (same catalog/index, browser front e
 scripts/templates/index.html   the search UI page
 scripts/eval_search.py         eval harness: grades search ranking + both resolution paths against golden_queries.json
 eval/golden_queries.json       25 golden queries with expected metric/dimensions/filters/date-range
+scripts/generate_uc_metric_views.py  generates native Unity Catalog Metric Views from semantic_models.yml/metrics.yml
 ```
 
 ## Data model — a small multi-domain lakehouse
@@ -652,11 +653,10 @@ Databricks/Spark's `sequence()` + `explode()`, from the same file. Every
 other model (staging, intermediate, marts) needed zero changes — plain
 `select`/`case`/`coalesce`/`union all` is portable as written.
 
-**Not yet built**: native Unity Catalog Metric Views (UC's own
-YAML-defined semantic layer, distinct from dbt's) generated from this
-project's `metrics.yml`/`semantic_models.yml`, so Genie/DBSQL dashboards
-could discover the same metrics without MetricFlow in the loop. That's the
-next layer on top of this, not a replacement for it.
+**Also built on top of this**: native Unity Catalog Metric Views, generated
+straight from `metrics.yml`/`semantic_models.yml` — see **Unity Catalog
+Metric Views**, below.
+
 ## Eval harness
 
 The disambiguation claims above, and `llm_interpreter.py`'s claims about
@@ -726,6 +726,109 @@ the LLM system prompt — that's the point: a prompt tweak that fixes
 `"shampoo revenue"` but regresses `"total revenue"` shows up as a number
 moving in the printed table, not as a vibe.
 
+## Unity Catalog Metric Views
+
+Unity Catalog has its own native semantic layer — Metric Views — distinct
+from dbt's. A UC Metric View is itself registered as a Unity Catalog view
+(`CREATE OR REPLACE VIEW ... WITH METRICS LANGUAGE YAML`), so Genie, DBSQL
+dashboards, and any UC-aware tool can discover and query a metric directly,
+without `mf`/MetricFlow in the loop at query time.
+
+`scripts/generate_uc_metric_views.py` generates one from this project's own
+`models/semantic/semantic_models.yml` + `metrics.yml` — not a hand-written
+second copy, which would drift the first time someone edited one definition
+and not the other. Same discipline `scripts/catalog.py` already applies to
+the search catalog: built from the real source, never hand-maintained.
+
+```bash
+python scripts/generate_uc_metric_views.py            # print the generated DDL (dry run)
+python scripts/generate_uc_metric_views.py --apply     # also create the views on Databricks
+```
+
+**One view per measure-bearing semantic model** — `mv_orders`, `mv_order_items`,
+`mv_payments` (all 9 metrics live across these three; `customers` and
+`products` never get their own view — they're join targets, the same role
+they play in MetricFlow's own entity graph, not metric-bearing models
+themselves):
+
+```sql
+-- mv_orders (generated)
+CREATE OR REPLACE VIEW semantic_search_poc.dev.mv_orders
+WITH METRICS LANGUAGE YAML AS $$
+version: 1.1
+source: semantic_search_poc.dev.fct_orders
+joins:
+  - name: customer
+    source: semantic_search_poc.dev.dim_customers
+    on: source.customer_id = customer.customer_id
+dimensions:
+  - name: order_date
+    expr: order_date
+  - name: status
+    expr: status
+  - name: region
+    expr: customer.region
+  - name: segment
+    expr: customer.segment
+measures:
+  - name: revenue
+    expr: SUM(order_amount)
+  - name: order_count
+    expr: COUNT(order_id)
+  - name: average_order_value
+    expr: SUM(order_amount) / COUNT(order_id)
+  - name: total_items_sold
+    expr: SUM(item_quantity)
+$$
+```
+
+Query it with Databricks SQL's `MEASURE()` function, not a plain aggregate:
+
+```sql
+SELECT region, MEASURE(revenue) AS revenue, MEASURE(average_order_value) AS aov
+FROM semantic_search_poc.dev.mv_orders GROUP BY region
+```
+
+**Syntax confirmed against a live workspace, not just the docs** — two
+Databricks doc pages actually disagreed with each other (one calls the
+dimension key `dimensions:`, the YAML reference page calls it `fields:`;
+neither showed a concrete multi-level join example), so every piece below
+was verified by creating and querying real views, not assumed:
+
+- **A nested (snowflake) join is reached by a dotted alias path, not a
+  second top-level join.** `payments → order → customer` is one join entry
+  (`order`) carrying its own nested `joins: [{name: customer, ...}]`; the
+  dimension expr is `order.customer.region` — confirmed against the real
+  2-hop payments-to-region case (see **The entity graph**, above).
+- **A join's `on:` always references the enclosing alias on its left** —
+  `source` at the top level, or the parent join's own name one level in
+  (`order.customer_id = customer.customer_id` inside the nested join
+  above, not `source.customer_id`).
+- **A ratio metric is just one expression combining both aggregates** —
+  `average_order_value` becomes `SUM(order_amount) / COUNT(order_id)` in a
+  single measure; there's no "derive from two named measures" mechanism.
+- **A metric-level filter becomes an inline `FILTER (WHERE ...)`** on the
+  measure's own `expr`, not a separate field — `payments_collected`'s
+  MetricFlow filter (`{{ Dimension('payment__status') }} = 'completed'`)
+  becomes `SUM(amount) FILTER (WHERE status = 'completed')`. The generator
+  translates the Jinja automatically (only for a dimension on the metric's
+  own semantic model, which is all this project's `metrics.yml` needs).
+- **A dimension-name collision is resolved by prefixing with the join
+  alias.** `payments` has its own `status`; the `order` join also exposes
+  one. The generator emits the joined one as `order_status` rather than
+  silently shadowing or erroring.
+
+**Verified correct against the known-good numbers**, including the 2-hop
+graph-crossing case and a cross-metric sanity check (`product_revenue`
+summed by region exactly equals `revenue` summed by region — same totals,
+a different grain):
+
+```
+mv_orders   revenue by region:            North 8943.56  East 10621.62  South 11665.38  West 7799.91
+mv_order_items  product_revenue by region: North 8943.56  East 10621.62  South 11665.38  West 7799.91
+mv_payments payments_collected by region: North 8876.91  East 9532.30   South 11627.19  West 7480.94
+```
+
 ## Known simplifications
 
 - Dimension collapsing by leaf name means `order_date` (order grain) and
@@ -770,10 +873,8 @@ moving in the printed table, not as a vibe.
   Databricks / Unity Catalog**, above; `type: snowflake` / `bigquery` would
   follow the same shape. Nothing in `models/semantic/` needs to change,
   since MetricFlow is engine-agnostic.
-- **Native Unity Catalog Metric Views**: a generator that reads this
-  project's own `metrics.yml`/`semantic_models.yml` and emits UC's YAML
-  metric-view syntax, so Genie/DBSQL dashboards can discover the same
-  metrics UC-natively, without `mf` in the loop.
+- **Native Unity Catalog Metric Views**: done — see **Unity Catalog Metric
+  Views**, above.
 - **Serve it for real**: put `scripts/app.py` behind a production WSGI
   server (gunicorn/uvicorn), and once you're on dbt Cloud / a hosted
   Semantic Layer, call its GraphQL API instead of the local `mf` CLI so
